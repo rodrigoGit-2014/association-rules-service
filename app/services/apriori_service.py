@@ -1,0 +1,306 @@
+"""Apriori association rules service — basket building, algorithm execution, and rule storage"""
+
+import logging
+import time
+from typing import List, Dict, Optional, Tuple
+from uuid import UUID
+from datetime import date
+
+import pandas as pd
+from mlxtend.frequent_patterns import apriori, association_rules
+from mlxtend.preprocessing import TransactionEncoder
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.models.analysis_run import AnalysisRun, AnalysisStatus
+from app.models.association_rule import AssociationRule
+from app.repositories.analysis_run_repository import AnalysisRunRepository
+from app.repositories.association_rule_repository import AssociationRuleRepository
+from app.repositories.ticket_repository import TicketRepository
+
+logger = logging.getLogger(__name__)
+
+
+class AprioriService:
+    """Orchestrates basket building, Apriori execution, and rule storage"""
+
+    def __init__(self, db: Session):
+        self.db = db
+        self.run_repo = AnalysisRunRepository(db)
+        self.rule_repo = AssociationRuleRepository(db)
+        self.ticket_repo = TicketRepository(db)
+
+    def estimate_size(
+        self,
+        start_date: date,
+        end_date: date,
+        department_id: Optional[str] = None,
+        section_id: Optional[str] = None,
+    ) -> int:
+        """Quick COUNT to decide sync vs async execution"""
+        return self.ticket_repo.count_transactions(
+            start_date=start_date,
+            end_date=end_date,
+            department_id=department_id,
+            section_id=section_id,
+        )
+
+    def create_run(
+        self,
+        min_support: float,
+        min_confidence: float,
+        min_lift: float,
+        fecha_inicio: Optional[date] = None,
+        fecha_fin: Optional[date] = None,
+        id_departamento: Optional[str] = None,
+        id_seccion: Optional[str] = None,
+    ) -> AnalysisRun:
+        """Create a new analysis run record"""
+        run = AnalysisRun(
+            min_support=min_support,
+            min_confidence=min_confidence,
+            min_lift=min_lift,
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+            id_departamento=id_departamento,
+            id_seccion=id_seccion,
+            status=AnalysisStatus.PENDING,
+        )
+        return self.run_repo.create(run)
+
+    def build_baskets(
+        self,
+        fecha_inicio: Optional[date] = None,
+        fecha_fin: Optional[date] = None,
+        id_departamento: Optional[str] = None,
+        id_seccion: Optional[str] = None,
+    ) -> Tuple[List[List[str]], int, int]:
+        """
+        Query tickets and build basket transactions.
+        Returns (transactions_list, total_transactions, total_unique_products).
+        """
+        query = """
+            SELECT id_pedido, array_agg(DISTINCT nombre_producto) AS products
+            FROM tickets
+            WHERE 1=1
+        """
+        params: Dict = {}
+
+        if fecha_inicio:
+            query += " AND fecha >= :fecha_inicio"
+            params["fecha_inicio"] = fecha_inicio
+        if fecha_fin:
+            query += " AND fecha <= :fecha_fin"
+            params["fecha_fin"] = fecha_fin
+        if id_departamento:
+            query += " AND id_departamento = :id_departamento"
+            params["id_departamento"] = id_departamento
+        if id_seccion:
+            query += " AND id_seccion = :id_seccion"
+            params["id_seccion"] = id_seccion
+
+        query += " GROUP BY id_pedido HAVING COUNT(DISTINCT nombre_producto) >= 2"
+
+        result = self.db.execute(text(query), params).fetchall()
+
+        transactions = [list(row.products) for row in result]
+        total_transactions = len(transactions)
+
+        all_products: set = set()
+        for t in transactions:
+            all_products.update(t)
+        total_products = len(all_products)
+
+        logger.info(f"Built {total_transactions} baskets with {total_products} unique products")
+        return transactions, total_transactions, total_products
+
+    def run_apriori(
+        self,
+        transactions: List[List[str]],
+        min_support: float,
+        min_confidence: float,
+        min_lift: float,
+    ) -> pd.DataFrame:
+        """Execute the Apriori algorithm and generate association rules"""
+        if not transactions:
+            return pd.DataFrame()
+
+        te = TransactionEncoder()
+        te_array = te.fit(transactions).transform(transactions)
+        df = pd.DataFrame(te_array, columns=te.columns_)
+
+        logger.info(f"Transaction matrix: {df.shape[0]} baskets x {df.shape[1]} products")
+
+        use_low_memory = len(transactions) > settings.SYNC_THRESHOLD
+        frequent_itemsets = apriori(
+            df,
+            min_support=min_support,
+            use_colnames=True,
+            low_memory=use_low_memory,
+        )
+
+        if frequent_itemsets.empty:
+            logger.warning("No frequent itemsets found with given min_support")
+            return pd.DataFrame()
+
+        logger.info(f"Found {len(frequent_itemsets)} frequent itemsets")
+
+        rules = association_rules(
+            frequent_itemsets,
+            metric="confidence",
+            min_threshold=min_confidence,
+        )
+
+        if rules.empty:
+            logger.warning("No rules found with given min_confidence")
+            return pd.DataFrame()
+
+        rules = rules[rules["lift"] >= min_lift]
+
+        if rules.empty:
+            logger.warning("No rules remaining after lift filter")
+            return pd.DataFrame()
+
+        rules = rules.nlargest(500, "lift")
+        logger.info(f"Generated {len(rules)} association rules")
+        return rules
+
+    def store_rules(self, run_id: UUID, rules_df: pd.DataFrame) -> int:
+        """Convert DataFrame rules to AssociationRule models and bulk insert"""
+        if rules_df.empty:
+            return 0
+
+        rules = []
+        for _, row in rules_df.iterrows():
+            rule = AssociationRule(
+                run_id=run_id,
+                antecedents=sorted(list(row["antecedents"])),
+                consequents=sorted(list(row["consequents"])),
+                support=float(row["support"]),
+                confidence=float(row["confidence"]),
+                lift=float(row["lift"]),
+            )
+            rules.append(rule)
+
+        return self.rule_repo.bulk_create(rules)
+
+    def execute_analysis(self, run_id: UUID) -> Dict:
+        """Full analysis pipeline for Celery async execution"""
+        run = self.run_repo.get(run_id)
+        if not run:
+            raise ValueError(f"Analysis run {run_id} not found")
+
+        run.update_status(AnalysisStatus.PROCESSING)
+        self.db.commit()
+
+        start_time = time.time()
+
+        try:
+            transactions, total_transactions, total_products = self.build_baskets(
+                fecha_inicio=run.fecha_inicio,
+                fecha_fin=run.fecha_fin,
+                id_departamento=run.id_departamento,
+                id_seccion=run.id_seccion,
+            )
+
+            if not transactions:
+                run.update_status(AnalysisStatus.FAILED, error_message="No transactions found")
+                run.total_transactions = 0
+                run.total_products = 0
+                run.rules_generated = 0
+                self.db.commit()
+                return {"status": "failed", "error": "No transactions found"}
+
+            rules_df = self.run_apriori(
+                transactions=transactions,
+                min_support=float(run.min_support),
+                min_confidence=float(run.min_confidence),
+                min_lift=float(run.min_lift),
+            )
+
+            rules_count = self.store_rules(run_id, rules_df)
+            elapsed = round(time.time() - start_time, 2)
+
+            run.total_transactions = total_transactions
+            run.total_products = total_products
+            run.rules_generated = rules_count
+            run.execution_time_secs = elapsed
+            run.update_status(AnalysisStatus.COMPLETED)
+            self.db.commit()
+
+            logger.info(f"Analysis {run_id} completed: {rules_count} rules in {elapsed}s")
+
+            return {
+                "status": "completed",
+                "run_id": str(run_id),
+                "rules_generated": rules_count,
+                "total_transactions": total_transactions,
+                "total_products": total_products,
+                "execution_time": elapsed,
+            }
+
+        except Exception as e:
+            elapsed = round(time.time() - start_time, 2)
+            run.execution_time_secs = elapsed
+            run.update_status(AnalysisStatus.FAILED, error_message=str(e))
+            self.db.commit()
+            logger.error(f"Analysis {run_id} failed: {e}", exc_info=True)
+            raise
+
+    def execute_sync(
+        self,
+        start_date: date,
+        end_date: date,
+        department_id: Optional[str] = None,
+        section_id: Optional[str] = None,
+        min_support: float = 0.02,
+        min_confidence: float = 0.6,
+        min_lift: float = 1.2,
+    ) -> List[Dict]:
+        """Synchronous execution for small datasets — returns rules directly"""
+        transactions, _, _ = self.build_baskets(
+            fecha_inicio=start_date,
+            fecha_fin=end_date,
+            id_departamento=department_id,
+            id_seccion=section_id,
+        )
+
+        rules_df = self.run_apriori(
+            transactions=transactions,
+            min_support=min_support,
+            min_confidence=min_confidence,
+            min_lift=min_lift,
+        )
+
+        if rules_df.empty:
+            return []
+
+        rules = []
+        for _, row in rules_df.iterrows():
+            rules.append({
+                "antecedent": sorted(list(row["antecedents"])),
+                "consequent": sorted(list(row["consequents"])),
+                "support": round(float(row["support"]), 6),
+                "confidence": round(float(row["confidence"]), 6),
+                "lift": round(float(row["lift"]), 4),
+            })
+
+        # Also persist the run + rules for future recommendation queries
+        run = AnalysisRun(
+            min_support=min_support,
+            min_confidence=min_confidence,
+            min_lift=min_lift,
+            fecha_inicio=start_date,
+            fecha_fin=end_date,
+            id_departamento=department_id,
+            id_seccion=section_id,
+            status=AnalysisStatus.COMPLETED,
+            total_transactions=len(transactions),
+            total_products=len(set(p for t in transactions for p in t)),
+            rules_generated=len(rules),
+        )
+        run = self.run_repo.create(run)
+        self.store_rules(run.id, rules_df)
+
+        return rules

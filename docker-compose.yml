@@ -1,0 +1,84 @@
+services:
+  apriori-api:
+    build: .
+    container_name: apriori_v2_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8002 --workers 2 --log-level info
+    environment:
+      - DATABASE_URL=postgresql://sales_user:sales_password@postgres:5432/sales_db
+      - REDIS_URL=redis://redis:6379/2
+      - CELERY_BROKER_URL=redis://redis:6379/2
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - LOG_LEVEL=INFO
+    ports:
+      - "8002:8002"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - apriori_v2_network
+      - sales_network
+    restart: unless-stopped
+
+  apriori-worker:
+    build: .
+    container_name: apriori_v2_worker
+    command: celery -A celery_app.celery worker --loglevel=info --concurrency=2 --max-tasks-per-child=10 -Q apriori,maintenance
+    environment:
+      - DATABASE_URL=postgresql://sales_user:sales_password@postgres:5432/sales_db
+      - REDIS_URL=redis://redis:6379/2
+      - CELERY_BROKER_URL=redis://redis:6379/2
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - LOG_LEVEL=INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - apriori_v2_network
+      - sales_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  apriori-beat:
+    build: .
+    container_name: apriori_v2_beat
+    command: celery -A celery_app.celery beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://sales_user:sales_password@postgres:5432/sales_db
+      - REDIS_URL=redis://redis:6379/2
+      - CELERY_BROKER_URL=redis://redis:6379/2
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - MATVIEW_REFRESH_MINUTES=30
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - apriori_v2_network
+      - sales_network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: apriori_v2_redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6381:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - apriori_v2_network
+    restart: unless-stopped
+
+networks:
+  apriori_v2_network:
+    driver: bridge
+  sales_network:
+    external: true
+    name: sales-insight-service_sales_network
