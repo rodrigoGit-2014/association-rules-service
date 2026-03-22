@@ -1,0 +1,67 @@
+services:
+  apriori-api:
+    build: .
+    container_name: apriori_api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 2 --log-level info
+    environment:
+      - DATABASE_URL=postgresql://sales_user:sales_password@postgres:5432/sales_db
+      - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - LOG_LEVEL=INFO
+      - LLM_ENABLED=false
+    ports:
+      - "8001:8001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - apriori_network
+      - sales_network
+    restart: unless-stopped
+
+  apriori-worker:
+    build: .
+    container_name: apriori_worker
+    command: celery -A celery_app.celery worker --loglevel=info --concurrency=2 --max-tasks-per-child=20 -Q apriori
+    environment:
+      - DATABASE_URL=postgresql://sales_user:sales_password@postgres:5432/sales_db
+      - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - LOG_LEVEL=INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - apriori_network
+      - sales_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  redis:
+    image: redis:7-alpine
+    container_name: apriori_redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - apriori_network
+    restart: unless-stopped
+
+networks:
+  apriori_network:
+    driver: bridge
+  sales_network:
+    external: true
+    name: sales-insight-service_sales_network
