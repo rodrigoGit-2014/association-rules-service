@@ -8,14 +8,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.core.config import settings
 from app.services.apriori_service import AprioriService
-from app.models.analysis_run import AnalysisStatus
 from app.schemas.analysis import (
     AprioriRequest,
     AprioriResponse,
     AssociationRuleResponse,
-    AprioriAsyncResponse,
     DeleteRunResponse,
     DeleteAllRunsResponse,
 )
@@ -25,67 +22,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post(
-    "/analysis/apriori",
-    response_model=AprioriResponse,
-    responses={202: {"model": AprioriAsyncResponse}},
-)
+@router.post("/analysis/apriori", response_model=AprioriResponse)
 def run_apriori_analysis(
     request: AprioriRequest,
     db: Session = Depends(get_db),
 ):
-    """
-    Run Apriori analysis on transactions within a date range.
-
-    Small datasets (< SYNC_THRESHOLD) execute synchronously and return rules.
-    Large datasets dispatch to Celery and return 202 with a poll URL.
-    """
+    """Run Apriori analysis synchronously and return rules"""
     service = AprioriService(db)
 
-    transaction_count = service.estimate_size(
+    logger.info(f"Running Apriori analysis: {request.start_date} to {request.end_date}")
+
+    rules = service.execute_sync(
         start_date=request.start_date,
         end_date=request.end_date,
         department_id=request.department_id,
         section_id=request.section_id,
-    )
-
-    logger.info(f"Estimated {transaction_count} transactions for analysis")
-
-    if transaction_count <= settings.SYNC_THRESHOLD:
-        rules = service.execute_sync(
-            start_date=request.start_date,
-            end_date=request.end_date,
-            department_id=request.department_id,
-            section_id=request.section_id,
-            min_support=request.min_support,
-            min_confidence=request.min_confidence,
-            min_lift=request.min_lift,
-        )
-        return AprioriResponse(
-            rules=[AssociationRuleResponse(**r) for r in rules]
-        )
-
-    # Async execution for large datasets
-    run = service.create_run(
         min_support=request.min_support,
         min_confidence=request.min_confidence,
         min_lift=request.min_lift,
-        fecha_inicio=request.start_date,
-        fecha_fin=request.end_date,
-        id_departamento=request.department_id,
-        id_seccion=request.section_id,
     )
 
-    from celery_app.tasks.run_apriori import run_apriori_task
-    run_apriori_task.delay(str(run.id))
-
-    return JSONResponse(
-        status_code=status.HTTP_202_ACCEPTED,
-        content={
-            "run_id": str(run.id),
-            "status": "processing",
-            "poll_url": f"/api/v1/analysis/apriori/{run.id}",
-        },
+    return AprioriResponse(
+        rules=[AssociationRuleResponse(**r) for r in rules]
     )
 
 
@@ -94,7 +52,7 @@ def get_analysis_result(
     run_id: UUID,
     db: Session = Depends(get_db),
 ):
-    """Poll for async analysis results"""
+    """Get rules from a previous analysis run"""
     service = AprioriService(db)
     run = service.run_repo.get(run_id)
 
@@ -104,27 +62,6 @@ def get_analysis_result(
             content={"detail": f"Analysis run {run_id} not found"},
         )
 
-    if run.status == AnalysisStatus.PROCESSING or run.status == AnalysisStatus.PENDING:
-        return JSONResponse(
-            status_code=status.HTTP_202_ACCEPTED,
-            content={
-                "run_id": str(run.id),
-                "status": run.status.value,
-                "poll_url": f"/api/v1/analysis/apriori/{run.id}",
-            },
-        )
-
-    if run.status == AnalysisStatus.FAILED:
-        return JSONResponse(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={
-                "run_id": str(run.id),
-                "status": "failed",
-                "error": run.error_message,
-            },
-        )
-
-    # COMPLETED — return rules
     rules = service.rule_repo.get_rules_by_run(run_id)
     return AprioriResponse(
         rules=[

@@ -27,12 +27,6 @@ class AprioriResponse(BaseModel):
     rules: list[AssociationRuleResponse]
 
 
-class AprioriAsyncResponse(BaseModel):
-    run_id: str
-    status: str
-    poll_url: str
-
-
 class DeleteRunResponse(BaseModel):
     run_id: str
     rules_deleted: int

@@ -12,12 +12,10 @@ from mlxtend.preprocessing import TransactionEncoder
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.analysis_run import AnalysisRun, AnalysisStatus
 from app.models.association_rule import AssociationRule
 from app.repositories.analysis_run_repository import AnalysisRunRepository
 from app.repositories.association_rule_repository import AssociationRuleRepository
-from app.repositories.ticket_repository import TicketRepository
 
 logger = logging.getLogger(__name__)
 
@@ -29,45 +27,6 @@ class AprioriService:
         self.db = db
         self.run_repo = AnalysisRunRepository(db)
         self.rule_repo = AssociationRuleRepository(db)
-        self.ticket_repo = TicketRepository(db)
-
-    def estimate_size(
-        self,
-        start_date: date,
-        end_date: date,
-        department_id: Optional[str] = None,
-        section_id: Optional[str] = None,
-    ) -> int:
-        """Quick COUNT to decide sync vs async execution"""
-        return self.ticket_repo.count_transactions(
-            start_date=start_date,
-            end_date=end_date,
-            department_id=department_id,
-            section_id=section_id,
-        )
-
-    def create_run(
-        self,
-        min_support: float,
-        min_confidence: float,
-        min_lift: float,
-        fecha_inicio: Optional[date] = None,
-        fecha_fin: Optional[date] = None,
-        id_departamento: Optional[str] = None,
-        id_seccion: Optional[str] = None,
-    ) -> AnalysisRun:
-        """Create a new analysis run record"""
-        run = AnalysisRun(
-            min_support=min_support,
-            min_confidence=min_confidence,
-            min_lift=min_lift,
-            fecha_inicio=fecha_inicio,
-            fecha_fin=fecha_fin,
-            id_departamento=id_departamento,
-            id_seccion=id_seccion,
-            status=AnalysisStatus.PENDING,
-        )
-        return self.run_repo.create(run)
 
     def build_baskets(
         self,
@@ -132,12 +91,11 @@ class AprioriService:
 
         logger.info(f"Transaction matrix: {df.shape[0]} baskets x {df.shape[1]} products")
 
-        use_low_memory = len(transactions) > settings.SYNC_THRESHOLD
         frequent_itemsets = apriori(
             df,
             min_support=min_support,
             use_colnames=True,
-            low_memory=use_low_memory,
+            low_memory=True,
         )
 
         if frequent_itemsets.empty:
@@ -185,69 +143,6 @@ class AprioriService:
 
         return self.rule_repo.bulk_create(rules)
 
-    def execute_analysis(self, run_id: UUID) -> Dict:
-        """Full analysis pipeline for Celery async execution"""
-        run = self.run_repo.get(run_id)
-        if not run:
-            raise ValueError(f"Analysis run {run_id} not found")
-
-        run.update_status(AnalysisStatus.PROCESSING)
-        self.db.commit()
-
-        start_time = time.time()
-
-        try:
-            transactions, total_transactions, total_products = self.build_baskets(
-                fecha_inicio=run.fecha_inicio,
-                fecha_fin=run.fecha_fin,
-                id_departamento=run.id_departamento,
-                id_seccion=run.id_seccion,
-            )
-
-            if not transactions:
-                run.update_status(AnalysisStatus.FAILED, error_message="No transactions found")
-                run.total_transactions = 0
-                run.total_products = 0
-                run.rules_generated = 0
-                self.db.commit()
-                return {"status": "failed", "error": "No transactions found"}
-
-            rules_df = self.run_apriori(
-                transactions=transactions,
-                min_support=float(run.min_support),
-                min_confidence=float(run.min_confidence),
-                min_lift=float(run.min_lift),
-            )
-
-            rules_count = self.store_rules(run_id, rules_df)
-            elapsed = round(time.time() - start_time, 2)
-
-            run.total_transactions = total_transactions
-            run.total_products = total_products
-            run.rules_generated = rules_count
-            run.execution_time_secs = elapsed
-            run.update_status(AnalysisStatus.COMPLETED)
-            self.db.commit()
-
-            logger.info(f"Analysis {run_id} completed: {rules_count} rules in {elapsed}s")
-
-            return {
-                "status": "completed",
-                "run_id": str(run_id),
-                "rules_generated": rules_count,
-                "total_transactions": total_transactions,
-                "total_products": total_products,
-                "execution_time": elapsed,
-            }
-
-        except Exception as e:
-            elapsed = round(time.time() - start_time, 2)
-            run.execution_time_secs = elapsed
-            run.update_status(AnalysisStatus.FAILED, error_message=str(e))
-            self.db.commit()
-            logger.error(f"Analysis {run_id} failed: {e}", exc_info=True)
-            raise
-
     def execute_sync(
         self,
         start_date: date,
@@ -258,8 +153,10 @@ class AprioriService:
         min_confidence: float = 0.6,
         min_lift: float = 1.2,
     ) -> List[Dict]:
-        """Synchronous execution for small datasets — returns rules directly"""
-        transactions, _, _ = self.build_baskets(
+        """Execute Apriori analysis and return rules directly"""
+        start_time = time.time()
+
+        transactions, total_txns, total_prods = self.build_baskets(
             fecha_inicio=start_date,
             fecha_fin=end_date,
             id_departamento=department_id,
@@ -286,7 +183,9 @@ class AprioriService:
                 "lift": round(float(row["lift"]), 4),
             })
 
-        # Also persist the run + rules for future recommendation queries
+        elapsed = round(time.time() - start_time, 2)
+
+        # Persist run + rules for future recommendation queries
         run = AnalysisRun(
             min_support=min_support,
             min_confidence=min_confidence,
@@ -296,11 +195,13 @@ class AprioriService:
             id_departamento=department_id,
             id_seccion=section_id,
             status=AnalysisStatus.COMPLETED,
-            total_transactions=len(transactions),
-            total_products=len(set(p for t in transactions for p in t)),
+            total_transactions=total_txns,
+            total_products=total_prods,
             rules_generated=len(rules),
+            execution_time_secs=elapsed,
         )
         run = self.run_repo.create(run)
         self.store_rules(run.id, rules_df)
 
+        logger.info(f"Analysis completed: {len(rules)} rules from {total_txns} baskets in {elapsed}s")
         return rules

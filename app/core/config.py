@@ -20,16 +20,6 @@ class Settings(BaseSettings):
         description="Redis connection URL for caching"
     )
 
-    # Celery
-    CELERY_BROKER_URL: str = Field(
-        default="redis://localhost:6379/2",
-        description="Celery broker URL"
-    )
-    CELERY_RESULT_BACKEND: str = Field(
-        default="redis://localhost:6379/2",
-        description="Celery result backend URL"
-    )
-
     # Application
     APP_NAME: str = Field(default="Apriori Market Basket Analysis API v2")
     APP_VERSION: str = Field(default="2.0.0")
@@ -49,9 +39,6 @@ class Settings(BaseSettings):
 
     # Performance tuning
     CACHE_TTL_SECONDS: int = Field(default=900, description="Default cache TTL (15 min)")
-    SYNC_THRESHOLD: int = Field(default=50000, description="Max transactions for sync Apriori execution")
-    MATVIEW_REFRESH_MINUTES: int = Field(default=30, description="Materialized view refresh interval")
-    BATCH_SIZE: int = Field(default=10000, description="Batch size for large data processing")
 
     model_config = {"env_file": ".env", "case_sensitive": False}
 
