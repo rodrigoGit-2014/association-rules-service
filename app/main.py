@@ -15,7 +15,7 @@ from app.core.exceptions import (
     general_exception_handler,
 )
 from app.db.session import engine, create_tables
-from app.db.matviews import create_matviews
+from app.db.matviews import create_matviews, refresh_matviews
 from app.api.v1.router import api_router
 
 setup_logging()
@@ -29,6 +29,10 @@ async def lifespan(app: FastAPI):
     import app.models.association_rule  # noqa: F401
     create_tables()
     create_matviews(engine)
+    try:
+        refresh_matviews(engine)
+    except Exception as e:
+        logger.warning(f"Could not refresh matviews on startup: {e}")
     yield
     logger.info(f"Shutting down {settings.APP_NAME}")
 
@@ -66,6 +70,13 @@ def root():
         "docs": "/docs",
         "api_v1": settings.API_V1_PREFIX,
     }
+
+
+@app.post("/refresh-matviews", status_code=status.HTTP_200_OK, tags=["Admin"])
+def refresh_materialized_views():
+    """Manually refresh materialized views after new data is loaded"""
+    refresh_matviews(engine)
+    return {"status": "ok", "message": "Materialized views refreshed"}
 
 
 @app.get("/health", status_code=status.HTTP_200_OK, tags=["Health"])
