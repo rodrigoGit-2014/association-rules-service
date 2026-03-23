@@ -39,8 +39,8 @@ WITH DATA
 """
 
 MV_TOP_PRODUCTS_INDEX = """
-CREATE INDEX IF NOT EXISTS idx_mv_top_products
-    ON mv_top_products (fecha, id_departamento, id_seccion)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_top_products
+    ON mv_top_products (fecha, id_departamento, id_seccion, nombre_producto)
 """
 
 
@@ -51,6 +51,8 @@ def create_matviews(engine: Engine) -> None:
             conn.execute(text(MV_TRANSACTION_SUMMARY))
             conn.execute(text(MV_TRANSACTION_SUMMARY_INDEX))
             conn.execute(text(MV_TOP_PRODUCTS))
+            # Drop old non-unique index if it exists, then create unique one
+            conn.execute(text("DROP INDEX IF EXISTS idx_mv_top_products"))
             conn.execute(text(MV_TOP_PRODUCTS_INDEX))
             conn.commit()
             logger.info("Materialized views created/verified successfully")

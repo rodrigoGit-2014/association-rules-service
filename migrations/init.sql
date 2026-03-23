@@ -78,5 +78,5 @@ FROM tickets
 GROUP BY fecha, id_departamento, id_seccion, nombre_producto
 WITH DATA;
 
-CREATE INDEX IF NOT EXISTS idx_mv_top_products
-    ON mv_top_products (fecha, id_departamento, id_seccion);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_top_products
+    ON mv_top_products (fecha, id_departamento, id_seccion, nombre_producto);
