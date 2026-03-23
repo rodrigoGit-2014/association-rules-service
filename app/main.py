@@ -14,7 +14,7 @@ from app.core.exceptions import (
     sqlalchemy_exception_handler,
     general_exception_handler,
 )
-from app.db.session import engine
+from app.db.session import engine, create_tables
 from app.db.matviews import create_matviews
 from app.api.v1.router import api_router
 
@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
+    import app.models.analysis_run  # noqa: F401
+    import app.models.association_rule  # noqa: F401
+    create_tables()
     create_matviews(engine)
     yield
     logger.info(f"Shutting down {settings.APP_NAME}")
