@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # API
     API_V1_PREFIX: str = Field(default="/api/v1")
+    PORT: int = Field(default=8002, description="Server port")
 
     # Performance tuning
     CACHE_TTL_SECONDS: int = Field(default=900, description="Default cache TTL (15 min)")

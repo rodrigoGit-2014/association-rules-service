@@ -14,4 +14,5 @@ COPY . .
 
 EXPOSE 8002
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002", "--workers", "2"]
+# Use PORT env variable if provided by Railway, otherwise default to 8002
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8002} --workers 2
