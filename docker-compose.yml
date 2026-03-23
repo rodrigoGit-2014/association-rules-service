@@ -16,7 +16,6 @@ services:
         condition: service_healthy
     networks:
       - apriori_v2_network
-      - sales_network
     restart: unless-stopped
 
   apriori-worker:
@@ -34,7 +33,6 @@ services:
         condition: service_healthy
     networks:
       - apriori_v2_network
-      - sales_network
     restart: unless-stopped
     deploy:
       resources:
@@ -58,7 +56,6 @@ services:
         condition: service_healthy
     networks:
       - apriori_v2_network
-      - sales_network
     restart: unless-stopped
 
   redis:
@@ -79,6 +76,3 @@ services:
 networks:
   apriori_v2_network:
     driver: bridge
-  sales_network:
-    external: true
-    name: sales-insight-service_sales_network

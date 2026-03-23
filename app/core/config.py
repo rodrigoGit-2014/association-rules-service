@@ -43,6 +43,8 @@ class Settings(BaseSettings):
 
     # API
     API_V1_PREFIX: str = Field(default="/api/v1")
+
+    # Server
     PORT: int = Field(default=8002, description="Server port")
 
     # Performance tuning
