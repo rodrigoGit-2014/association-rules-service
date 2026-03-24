@@ -24,16 +24,30 @@ class TicketRepository:
         section_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Query mv_transaction_summary for aggregated metrics"""
-        query = """
+        # Build optional filters for subqueries on tickets table
+        ticket_filters = " AND id_departamento = :department_id" if department_id else ""
+        ticket_filters += " AND id_seccion = :section_id" if section_id else ""
+
+        query = f"""
             SELECT
                 COALESCE(SUM(total_transactions), 0) AS total_transactions,
-                COALESCE(SUM(total_products), 0) AS total_products,
+                (
+                    SELECT COUNT(DISTINCT nombre_producto)
+                    FROM tickets
+                    WHERE fecha BETWEEN :start_date AND :end_date
+                    {ticket_filters}
+                ) AS total_products,
                 CASE
-                    WHEN COALESCE(SUM(total_transactions), 0) = 0 THEN 0
-                    ELSE SUM(avg_products_per_purchase * total_transactions) / SUM(total_transactions)
+                    WHEN SUM(total_transactions) = 0 THEN 0
+                    ELSE (
+                        SELECT SUM(precio_total)
+                        FROM tickets
+                        WHERE fecha BETWEEN :start_date AND :end_date
+                        {ticket_filters}
+                    ) * 1.0 / SUM(total_transactions)
                 END AS avg_products_per_purchase
             FROM mv_transaction_summary
-            WHERE fecha >= :start_date AND fecha <= :end_date
+            WHERE fecha BETWEEN :start_date AND :end_date
         """
         params: Dict[str, Any] = {"start_date": start_date, "end_date": end_date}
 
@@ -47,9 +61,9 @@ class TicketRepository:
         result = self.db.execute(text(query), params).first()
 
         return {
-            "total_transactions": int(result.total_transactions),
-            "total_products": int(result.total_products),
-            "avg_products_per_purchase": round(float(result.avg_products_per_purchase), 1),
+            "total_transactions": int(result.total_transactions or 0),
+            "total_products": int(result.total_products or 0),
+            "avg_products_per_purchase": round(float(result.avg_products_per_purchase or 0), 2),
         }
 
     def get_top_products(
