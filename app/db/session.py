@@ -31,6 +31,30 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def create_tables():
-    """Create all tables defined in models"""
+    """Create all tables defined in models, and add missing columns"""
     from app.db.base import Base
+    from sqlalchemy import text, inspect
+    import logging
+
+    logger = logging.getLogger(__name__)
+
     Base.metadata.create_all(bind=engine)
+
+    # Add missing columns to existing tables
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table_name, table in Base.metadata.tables.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing_columns = {col["name"] for col in inspector.get_columns(table_name)}
+            for column in table.columns:
+                if column.name not in existing_columns:
+                    col_type = column.type.compile(dialect=engine.dialect)
+                    nullable = "NULL" if column.nullable else "NOT NULL"
+                    default_clause = ""
+                    if column.server_default is not None:
+                        default_val = column.server_default.arg.text if hasattr(column.server_default.arg, 'text') else str(column.server_default.arg)
+                        default_clause = f" DEFAULT '{default_val}'"
+                    sql = f'ALTER TABLE {table_name} ADD COLUMN "{column.name}" {col_type}{default_clause} {nullable}'
+                    logger.info(f"Adding missing column: {sql}")
+                    conn.execute(text(sql))
