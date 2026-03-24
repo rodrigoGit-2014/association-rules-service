@@ -23,39 +23,27 @@ class TicketRepository:
         department_id: Optional[str] = None,
         section_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Query mv_transaction_summary for aggregated metrics"""
-        # Build optional filters for subqueries on tickets table
-        ticket_filters = " AND id_departamento = :department_id" if department_id else ""
-        ticket_filters += " AND id_seccion = :section_id" if section_id else ""
+        """Query tickets table for aggregated metrics"""
+        filters = " AND id_departamento = :department_id" if department_id else ""
+        filters += " AND id_seccion = :section_id" if section_id else ""
 
         query = f"""
             SELECT
-                COALESCE(SUM(total_transactions), 0) AS total_transactions,
-                (
-                    SELECT COUNT(DISTINCT nombre_producto)
-                    FROM tickets
-                    WHERE fecha BETWEEN :start_date AND :end_date
-                    {ticket_filters}
-                ) AS total_products,
+                COUNT(DISTINCT id_pedido) AS total_transactions,
+                COUNT(DISTINCT nombre_producto) AS total_products,
                 CASE
-                    WHEN SUM(total_transactions) = 0 THEN 0
-                    ELSE (
-                        SELECT SUM(precio_total)
-                        FROM tickets
-                        WHERE fecha BETWEEN :start_date AND :end_date
-                        {ticket_filters}
-                    ) * 1.0 / SUM(total_transactions)
+                    WHEN COUNT(DISTINCT id_pedido) = 0 THEN 0
+                    ELSE COUNT(id_producto)::FLOAT / COUNT(DISTINCT id_pedido)
                 END AS avg_products_per_purchase
-            FROM mv_transaction_summary
+            FROM tickets
             WHERE fecha BETWEEN :start_date AND :end_date
+            {filters}
         """
         params: Dict[str, Any] = {"start_date": start_date, "end_date": end_date}
 
         if department_id:
-            query += " AND id_departamento = :department_id"
             params["department_id"] = department_id
         if section_id:
-            query += " AND id_seccion = :section_id"
             params["section_id"] = section_id
 
         result = self.db.execute(text(query), params).first()
@@ -74,12 +62,12 @@ class TicketRepository:
         section_id: Optional[str] = None,
         limit: int = 10,
     ) -> List[Dict[str, Any]]:
-        """Query mv_top_products for most frequent products"""
+        """Query tickets table for most frequent products"""
         query = """
             SELECT
                 nombre_producto AS product,
-                SUM(transaction_count) AS count
-            FROM mv_top_products
+                COUNT(DISTINCT id_pedido) AS count
+            FROM tickets
             WHERE fecha >= :start_date AND fecha <= :end_date
         """
         params: Dict[str, Any] = {"start_date": start_date, "end_date": end_date}
