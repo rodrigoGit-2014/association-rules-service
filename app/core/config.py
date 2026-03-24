@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     # Server
     PORT: int = Field(default=8002, description="Server port")
 
+    # JWT
+    JWT_SECRET: str = Field(
+        default="change-me-in-production-use-a-long-random-string",
+        description="Secret key for JWT signing"
+    )
+
     # Performance tuning
     CACHE_TTL_SECONDS: int = Field(default=900, description="Default cache TTL (15 min)")
 

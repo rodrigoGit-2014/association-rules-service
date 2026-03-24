@@ -2,6 +2,7 @@
 
 from typing import Optional
 from datetime import date
+from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.repositories.base import BaseRepository
@@ -15,6 +16,7 @@ class AnalysisRunRepository(BaseRepository[AnalysisRun]):
 
     def get_latest_completed(
         self,
+        company_id: UUID,
         fecha_inicio: Optional[date] = None,
         fecha_fin: Optional[date] = None,
     ) -> Optional[AnalysisRun]:
@@ -22,6 +24,7 @@ class AnalysisRunRepository(BaseRepository[AnalysisRun]):
         query = (
             self.db.query(AnalysisRun)
             .filter(AnalysisRun.status == AnalysisStatus.COMPLETED)
+            .filter(AnalysisRun.company_id == company_id)
         )
         if fecha_inicio:
             query = query.filter(AnalysisRun.fecha_inicio <= fecha_fin)

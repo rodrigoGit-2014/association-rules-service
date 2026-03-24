@@ -30,6 +30,7 @@ class AprioriService:
 
     def build_baskets(
         self,
+        company_id: UUID,
         fecha_inicio: Optional[date] = None,
         fecha_fin: Optional[date] = None,
         id_departamento: Optional[str] = None,
@@ -43,8 +44,10 @@ class AprioriService:
             SELECT id_pedido, array_agg(DISTINCT nombre_producto) AS products
             FROM tickets
             WHERE 1=1
+            AND company_id = :company_id
         """
         params: Dict = {}
+        params["company_id"] = company_id
 
         if fecha_inicio:
             query += " AND fecha >= :fecha_inicio"
@@ -145,6 +148,7 @@ class AprioriService:
 
     def execute_sync(
         self,
+        company_id: UUID,
         start_date: date,
         end_date: date,
         department_id: Optional[str] = None,
@@ -157,6 +161,7 @@ class AprioriService:
         start_time = time.time()
 
         transactions, total_txns, total_prods = self.build_baskets(
+            company_id=company_id,
             fecha_inicio=start_date,
             fecha_fin=end_date,
             id_departamento=department_id,
@@ -187,6 +192,7 @@ class AprioriService:
 
         # Persist run + rules for future recommendation queries
         run = AnalysisRun(
+            company_id=company_id,
             min_support=min_support,
             min_confidence=min_confidence,
             min_lift=min_lift,

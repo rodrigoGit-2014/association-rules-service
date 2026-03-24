@@ -24,6 +24,7 @@ class AnalysisRun(Base):
     __tablename__ = "analysis_runs"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    company_id = Column(UUID(as_uuid=True), nullable=False, index=True, comment="Company/tenant ID")
 
     status = Column(
         SQLAlchemyEnum(AnalysisStatus, name="analysis_status", values_callable=lambda x: [e.value for e in x]),

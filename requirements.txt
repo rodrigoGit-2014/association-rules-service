@@ -20,3 +20,6 @@ structlog>=24.0.0
 pytest>=7.4.0
 pytest-asyncio>=0.23.0
 httpx>=0.26.0
+
+# Auth
+python-jose[cryptography]==3.3.0

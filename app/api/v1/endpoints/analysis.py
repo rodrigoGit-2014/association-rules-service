@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
+from app.api.auth_deps import get_current_user, TokenData
 from app.services.apriori_service import AprioriService
 from app.schemas.analysis import (
     AprioriRequest,
@@ -26,6 +27,7 @@ router = APIRouter()
 def run_apriori_analysis(
     request: AprioriRequest,
     db: Session = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
 ):
     """Run Apriori analysis synchronously and return rules"""
     service = AprioriService(db)
@@ -33,6 +35,7 @@ def run_apriori_analysis(
     logger.info(f"Running Apriori analysis: {request.start_date} to {request.end_date}")
 
     rules = service.execute_sync(
+        company_id=current_user.company_id,
         start_date=request.start_date,
         end_date=request.end_date,
         department_id=request.department_id,
@@ -51,6 +54,7 @@ def run_apriori_analysis(
 def get_analysis_result(
     run_id: UUID,
     db: Session = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
 ):
     """Get rules from a previous analysis run"""
     service = AprioriService(db)
@@ -81,6 +85,7 @@ def get_analysis_result(
 def delete_analysis_run(
     run_id: UUID,
     db: Session = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
 ):
     """Delete an analysis run and all its associated rules (CASCADE)"""
     service = AprioriService(db)
@@ -107,16 +112,19 @@ def delete_analysis_run(
 @router.delete("/analysis/apriori", response_model=DeleteAllRunsResponse)
 def delete_all_analysis_runs(
     db: Session = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
 ):
     """Delete all analysis runs and their associated rules"""
     from app.models.analysis_run import AnalysisRun
     from app.models.association_rule import AssociationRule
 
-    rules_count = db.query(AssociationRule).count()
-    runs_count = db.query(AnalysisRun).count()
+    rules_count = db.query(AssociationRule).join(AnalysisRun).filter(AnalysisRun.company_id == current_user.company_id).count()
+    runs_count = db.query(AnalysisRun).filter(AnalysisRun.company_id == current_user.company_id).count()
 
-    db.query(AssociationRule).delete()
-    db.query(AnalysisRun).delete()
+    db.query(AssociationRule).filter(AssociationRule.run_id.in_(
+        db.query(AnalysisRun.id).filter(AnalysisRun.company_id == current_user.company_id)
+    )).delete(synchronize_session=False)
+    db.query(AnalysisRun).filter(AnalysisRun.company_id == current_user.company_id).delete(synchronize_session=False)
     db.commit()
 
     logger.info(f"Deleted all analysis: {runs_count} runs, {rules_count} rules")

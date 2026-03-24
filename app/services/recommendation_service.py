@@ -3,6 +3,7 @@
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import date
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -25,6 +26,7 @@ class RecommendationService:
 
     def get_recommendations(
         self,
+        company_id: UUID,
         product: str,
         start_date: date,
         end_date: date,
@@ -32,6 +34,7 @@ class RecommendationService:
         """Find product recommendations from the latest completed analysis"""
         cache_key = make_cache_key(
             CACHE_PREFIX,
+            company_id=str(company_id),
             product=product,
             start_date=start_date,
             end_date=end_date,
@@ -43,6 +46,7 @@ class RecommendationService:
             return cached_result
 
         run = self.run_repo.get_latest_completed(
+            company_id=company_id,
             fecha_inicio=start_date,
             fecha_fin=end_date,
         )

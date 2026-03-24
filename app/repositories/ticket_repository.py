@@ -3,6 +3,7 @@
 import logging
 from typing import Optional, List, Dict, Any
 from datetime import date
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -18,6 +19,7 @@ class TicketRepository:
 
     def get_summary(
         self,
+        company_id: UUID,
         start_date: date,
         end_date: date,
         department_id: Optional[str] = None,
@@ -37,9 +39,11 @@ class TicketRepository:
                 END AS avg_products_per_purchase
             FROM tickets
             WHERE fecha BETWEEN :start_date AND :end_date
+            AND company_id = :company_id
             {filters}
         """
         params: Dict[str, Any] = {"start_date": start_date, "end_date": end_date}
+        params["company_id"] = company_id
 
         if department_id:
             params["department_id"] = department_id
@@ -56,6 +60,7 @@ class TicketRepository:
 
     def get_top_products(
         self,
+        company_id: UUID,
         start_date: date,
         end_date: date,
         department_id: Optional[str] = None,
@@ -69,8 +74,10 @@ class TicketRepository:
                 COUNT(DISTINCT id_pedido) AS count
             FROM tickets
             WHERE fecha >= :start_date AND fecha <= :end_date
+            AND company_id = :company_id
         """
         params: Dict[str, Any] = {"start_date": start_date, "end_date": end_date}
+        params["company_id"] = company_id
 
         if department_id:
             query += " AND id_departamento = :department_id"
@@ -87,6 +94,7 @@ class TicketRepository:
 
     def get_baskets(
         self,
+        company_id: UUID,
         start_date: date,
         end_date: date,
         department_id: Optional[str] = None,
@@ -101,8 +109,10 @@ class TicketRepository:
             SELECT COUNT(DISTINCT id_pedido) AS total
             FROM tickets
             WHERE fecha >= :start_date AND fecha <= :end_date
+            AND company_id = :company_id
         """
         params: Dict[str, Any] = {"start_date": start_date, "end_date": end_date}
+        params["company_id"] = company_id
 
         if department_id:
             count_query += " AND id_departamento = :department_id"
@@ -119,6 +129,7 @@ class TicketRepository:
                    array_agg(DISTINCT nombre_producto ORDER BY nombre_producto) AS products
             FROM tickets
             WHERE fecha >= :start_date AND fecha <= :end_date
+            AND company_id = :company_id
         """
         if department_id:
             baskets_query += " AND id_departamento = :department_id"
@@ -139,6 +150,7 @@ class TicketRepository:
 
     def count_transactions(
         self,
+        company_id: UUID,
         start_date: date,
         end_date: date,
         department_id: Optional[str] = None,
@@ -149,8 +161,10 @@ class TicketRepository:
             SELECT COUNT(DISTINCT id_pedido) AS cnt
             FROM tickets
             WHERE fecha >= :start_date AND fecha <= :end_date
+            AND company_id = :company_id
         """
         params: Dict[str, Any] = {"start_date": start_date, "end_date": end_date}
+        params["company_id"] = company_id
 
         if department_id:
             query += " AND id_departamento = :department_id"

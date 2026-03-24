@@ -3,6 +3,7 @@
 import logging
 from typing import Optional, Dict, Any
 from datetime import date
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -23,6 +24,7 @@ class TransactionService:
 
     def get_baskets(
         self,
+        company_id: UUID,
         start_date: date,
         end_date: date,
         department_id: Optional[str] = None,
@@ -33,6 +35,7 @@ class TransactionService:
         """Get transaction baskets with caching"""
         cache_key = make_cache_key(
             "txn_baskets",
+            company_id=str(company_id),
             start_date=start_date,
             end_date=end_date,
             department_id=department_id,
@@ -47,6 +50,7 @@ class TransactionService:
             return cached_result
 
         result = self.ticket_repo.get_baskets(
+            company_id=company_id,
             start_date=start_date,
             end_date=end_date,
             department_id=department_id,
@@ -60,6 +64,7 @@ class TransactionService:
 
     def get_summary(
         self,
+        company_id: UUID,
         start_date: date,
         end_date: date,
         department_id: Optional[str] = None,
@@ -68,6 +73,7 @@ class TransactionService:
         """Get transaction summary with caching"""
         cache_key = make_cache_key(
             CACHE_PREFIX,
+            company_id=str(company_id),
             start_date=start_date,
             end_date=end_date,
             department_id=department_id,
@@ -80,6 +86,7 @@ class TransactionService:
             return cached_result
 
         summary = self.ticket_repo.get_summary(
+            company_id=company_id,
             start_date=start_date,
             end_date=end_date,
             department_id=department_id,
@@ -87,6 +94,7 @@ class TransactionService:
         )
 
         top_products = self.ticket_repo.get_top_products(
+            company_id=company_id,
             start_date=start_date,
             end_date=end_date,
             department_id=department_id,
