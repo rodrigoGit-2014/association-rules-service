@@ -14,6 +14,9 @@ from app.schemas.analysis import (
     AprioriRequest,
     AprioriResponse,
     AssociationRuleResponse,
+    AnalysisRunResponse,
+    AnalysisRunDetailResponse,
+    AnalysisRunListResponse,
     DeleteRunResponse,
     DeleteAllRunsResponse,
 )
@@ -78,6 +81,87 @@ def get_analysis_result(
             )
             for r in rules
         ]
+    )
+
+
+@router.get("/analysis/runs", response_model=AnalysisRunListResponse)
+def list_analysis_runs(
+    limit: int = 10,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """List analysis runs for the current company with metadata"""
+    from app.repositories.analysis_run_repository import AnalysisRunRepository
+    repo = AnalysisRunRepository(db)
+    runs, total = repo.list_by_company(current_user.company_id, limit, offset)
+    return AnalysisRunListResponse(
+        runs=[AnalysisRunResponse(
+            id=r.id,
+            status=r.status.value,
+            min_support=float(r.min_support),
+            min_confidence=float(r.min_confidence),
+            min_lift=float(r.min_lift),
+            fecha_inicio=r.fecha_inicio.date() if r.fecha_inicio else None,
+            fecha_fin=r.fecha_fin.date() if r.fecha_fin else None,
+            id_departamento=r.id_departamento,
+            id_seccion=r.id_seccion,
+            total_transactions=r.total_transactions,
+            total_products=r.total_products,
+            rules_generated=r.rules_generated,
+            execution_time_secs=float(r.execution_time_secs) if r.execution_time_secs else None,
+            created_at=r.created_at,
+            completed_at=r.completed_at,
+        ) for r in runs],
+        total=total,
+    )
+
+
+@router.get("/analysis/runs/{run_id}", response_model=AnalysisRunDetailResponse)
+def get_analysis_run_detail(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """Get a specific analysis run with its metadata and rules"""
+    service = AprioriService(db)
+    run = service.run_repo.get(run_id)
+
+    if not run:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"detail": f"Analysis run {run_id} not found"},
+        )
+
+    rules = service.rule_repo.get_rules_by_run(run_id)
+    return AnalysisRunDetailResponse(
+        run=AnalysisRunResponse(
+            id=run.id,
+            status=run.status.value,
+            min_support=float(run.min_support),
+            min_confidence=float(run.min_confidence),
+            min_lift=float(run.min_lift),
+            fecha_inicio=run.fecha_inicio.date() if run.fecha_inicio else None,
+            fecha_fin=run.fecha_fin.date() if run.fecha_fin else None,
+            id_departamento=run.id_departamento,
+            id_seccion=run.id_seccion,
+            total_transactions=run.total_transactions,
+            total_products=run.total_products,
+            rules_generated=run.rules_generated,
+            execution_time_secs=float(run.execution_time_secs) if run.execution_time_secs else None,
+            created_at=run.created_at,
+            completed_at=run.completed_at,
+        ),
+        rules=[
+            AssociationRuleResponse(
+                antecedent=list(r.antecedents),
+                consequent=list(r.consequents),
+                support=round(float(r.support), 6),
+                confidence=round(float(r.confidence), 6),
+                lift=round(float(r.lift), 4),
+            )
+            for r in rules
+        ],
     )
 
 

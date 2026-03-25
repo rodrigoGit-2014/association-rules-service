@@ -1,7 +1,8 @@
 """Schemas for Apriori analysis endpoint"""
 
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
+from uuid import UUID
 from pydantic import BaseModel, Field
 
 
@@ -25,6 +26,37 @@ class AssociationRuleResponse(BaseModel):
 
 class AprioriResponse(BaseModel):
     rules: list[AssociationRuleResponse]
+
+
+class AnalysisRunResponse(BaseModel):
+    id: UUID
+    status: str
+    min_support: float
+    min_confidence: float
+    min_lift: float
+    fecha_inicio: Optional[date] = None
+    fecha_fin: Optional[date] = None
+    id_departamento: Optional[str] = None
+    id_seccion: Optional[str] = None
+    total_transactions: Optional[int] = None
+    total_products: Optional[int] = None
+    rules_generated: Optional[int] = None
+    execution_time_secs: Optional[float] = None
+    created_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AnalysisRunDetailResponse(BaseModel):
+    run: AnalysisRunResponse
+    rules: list[AssociationRuleResponse]
+
+
+class AnalysisRunListResponse(BaseModel):
+    runs: list[AnalysisRunResponse]
+    total: int
 
 
 class DeleteRunResponse(BaseModel):

@@ -14,6 +14,22 @@ class AnalysisRunRepository(BaseRepository[AnalysisRun]):
     def __init__(self, db: Session):
         super().__init__(AnalysisRun, db)
 
+    def list_by_company(
+        self,
+        company_id: UUID,
+        limit: int = 10,
+        offset: int = 0,
+    ):
+        """List analysis runs for a company, most recent first"""
+        query = (
+            self.db.query(AnalysisRun)
+            .filter(AnalysisRun.company_id == company_id)
+            .order_by(AnalysisRun.created_at.desc())
+        )
+        total = query.count()
+        runs = query.offset(offset).limit(limit).all()
+        return runs, total
+
     def get_latest_completed(
         self,
         company_id: UUID,
