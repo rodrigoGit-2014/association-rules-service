@@ -62,7 +62,10 @@ class AprioriService:
             query += " AND id_seccion = :id_seccion"
             params["id_seccion"] = id_seccion
 
-        query += " GROUP BY id_pedido HAVING COUNT(DISTINCT nombre_producto) >= 2"
+        # Every order counts as a transaction, including single-product ones.
+        # Dropping them shrinks the base and inflates support, confidence and lift,
+        # and makes support inconsistent with the dataset totals shown in the UI.
+        query += " GROUP BY id_pedido"
 
         result = self.db.execute(text(query), params).fetchall()
 
